@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <title>Qualitative Comparative Tool (Offline)</title>
+    <style>
+        body { font-family: 'Sarabun', sans-serif; background: #f0f2f5; padding: 20px; color: #333; }
+        .container { max-width: 900px; margin: auto; background: white; padding: 30px; border-radius: 12px; shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        h1 { color: #1a73e8; text-align: center; }
+        .upload-area { border: 2px dashed #1a73e8; padding: 40px; text-align: center; border-radius: 8px; cursor: pointer; transition: 0.3s; }
+        .upload-area:hover { background: #e8f0fe; }
+        #results { margin-top: 30px; display: none; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .section { background: #fff; border: 1px solid #ddd; padding: 15px; border-radius: 8px; }
+        .pattern-title { color: #28a745; font-weight: bold; border-bottom: 2px solid #28a745; }
+        .variation-title { color: #e67e22; font-weight: bold; border-bottom: 2px solid #e67e22; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 0.9em; }
+        th, td { border: 1px solid #eee; padding: 10px; text-align: left; }
+        th { background: #f8f9fa; }
+        .keyword-tag { background: #e8f0fe; color: #1a73e8; padding: 2px 8px; border-radius: 4px; margin: 2px; display: inline-block; font-size: 0.8em; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>🔍 Qualitative Text Analyzer</h1>
+    <p style="text-align:center;">อัปโหลดบทสัมภาษณ์ .txt (หลายไฟล์) เพื่อหาจุดร่วมและจุดต่าง</p>
+
+    <div class="upload-area" onclick="document.getElementById('fileInput').click()">
+        <strong>คลิกเพื่อเลือกไฟล์ .txt</strong>
+        <input type="file" id="fileInput" multiple accept=".txt" style="display:none">
+    </div>
+
+    <div id="results">
+        <div class="grid">
+            <div class="section">
+                <h3 class="pattern-title">✅ Patterns (ประเด็นร่วม)</h3>
+                <p><small>คำสำคัญที่ปรากฏซ้ำในทุกผู้ให้ข้อมูล</small></p>
+                <div id="patterns-list"></div>
+            </div>
+            <div class="section">
+                <h3 class="variation-title">💡 Variations (จุดต่าง)</h3>
+                <p><small>ประเด็นเด่นเฉพาะตัวรายบุคคล (TF-IDF)</small></p>
+                <div id="variations-list"></div>
+            </div>
+        </div>
+
+        <div class="section" style="margin-top:20px;">
+            <h3>📊 Comparative Matrix</h3>
+            <div id="matrix-container"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Stop words ภาษาไทยเบื้องต้น
+const stopWords = new Set(['ที่', 'และ', 'ของ', 'ใน', 'คือ', 'ได้', 'มี', 'ให้', 'การ', 'ความ', 'เป็น', 'จะ', 'ว่า', 'ครับ', 'ค่ะ', 'เลย', 'ก็', 'นี้', 'นั้น', 'แบบ', 'เฉยๆ', 'คน', 'ไป', 'มา']);
+
+document.getElementById('fileInput').addEventListener('change', async function(e) {
+    const files = Array.from(e.target.files);
+    if (files.length < 2) { alert("กรุณาเลือกอย่างน้อย 2 ไฟล์เพื่อเปรียบเทียบ"); return; }
+
+    let allDocs = [];
+    let vocab = new Set();
+
+    for (let file of files) {
+        const text = await file.text();
+        // การตัดคำเบื้องต้น (ใช้ช่องว่างและสัญลักษณ์พิเศษ)
+        const words = text.replace(/[^\u0E00-\u0E7Fa-zA-Z]/g, ' ')
+                          .split(/\s+/)
+                          .filter(w => w.length > 2 && !stopWords.has(w));
+        
+        const counts = {};
+        words.forEach(w => {
+            counts[w] = (counts[w] || 0) + 1;
+            vocab.add(w);
+        });
+
+        allDocs.push({ name: file.name.replace('.txt', ''), counts, total: words.length });
+    }
+
+    calculateMetrics(allDocs, Array.from(vocab));
+    document.getElementById('results').style.display = 'block';
+});
+
+function calculateMetrics(docs, vocab) {
+    const numDocs = docs.length;
+    const docFreq = {}; // ดูว่าคำนี้ปรากฏในกี่คน
+
+    vocab.forEach(word => {
+        docFreq[word] = docs.filter(d => d.counts[word]).length;
+    });
+
+    // 1. หา Patterns (คำที่ปรากฏในทุกคน)
+    const patterns = vocab.filter(w => docFreq[w] === numDocs)
+                          .sort((a, b) => {
+                             const sumA = docs.reduce((s, d) => s + d.counts[a], 0);
+                             const sumB = docs.reduce((s, d) => s + d.counts[b], 0);
+                             return sumB - sumA;
+                          }).slice(0, 10);
+
+    document.getElementById('patterns-list').innerHTML = patterns.map(p => `<span class="keyword-tag">${p}</span>`).join(' ');
+
+    // 2. หา Variations (TF-IDF แบบง่าย)
+    let variationHtml = "";
+    docs.forEach(doc => {
+        const tfIdf = vocab.map(word => {
+            const tf = (doc.counts[word] || 0) / doc.total;
+            const idf = Math.log(numDocs / (docFreq[word] || 1));
+            return { word, score: tf * idf };
+        }).sort((a, b) => b.score - a.score).slice(0, 5);
+
+        variationHtml += `<p><strong>${doc.name}:</strong> ${tfIdf.map(t => t.word).join(', ')}</p>`;
+    });
+    document.getElementById('variations-list').innerHTML = variationHtml;
+
+    // 3. สร้าง Matrix Table
+    let table = `<table><tr><th>คำสำคัญ / ผู้ให้ข้อมูล</th>`;
+    docs.forEach(d => table += `<th>${d.name}</th>`);
+    table += `</tr>`;
+
+    // เลือกคำที่เด่นที่สุดมาโชว์ในตาราง
+    const topKeywords = vocab.sort((a, b) => docFreq[b] - docFreq[a]).slice(0, 15);
+    topKeywords.forEach(word => {
+        table += `<tr><td><strong>${word}</strong></td>`;
+        docs.forEach(d => {
+            table += `<td>${d.counts[word] || '-'}</td>`;
+        });
+        table += `</tr>`;
+    });
+    table += `</table>`;
+    document.getElementById('matrix-container').innerHTML = table;
+}
+</script>
+
+</body>
+</html>
